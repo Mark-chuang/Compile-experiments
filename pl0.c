@@ -541,6 +541,56 @@ void statement(symset fsys)
 		statement(fsys);
 		code[cx1].a = cx;	
 	}
+	else if (sym == SYM_ELIF) 
+    { // elif statement
+        getsym();
+        set1 = createset(SYM_THEN, SYM_DO, SYM_NULL);
+        set = uniteset(set1, fsys);
+        condition(set); // Condition expression
+        destroyset(set1);
+        destroyset(set);
+        if (sym == SYM_THEN)
+        {
+            getsym();
+        }
+        else
+        {
+            error(16); // 'then' expected.
+        }
+        cx1 = cx;
+        gen(JPC, 0, 0); // Jump if condition is false
+        statement(fsys);
+        code[cx1].a = cx; // Patch the jump instruction after elif block
+    }
+	else if (sym == SYM_ELSE)
+    { // else statement
+        getsym();
+        cx1 = cx;
+        gen(JMP, 0, 0); // Jump over the elif/else block
+        code[cx2].a = cx; // Patch the earlier JPC
+        statement(fsys);
+        code[cx1].a = cx; // Patch the jump here to execute after the else block
+    }
+	else if (sym == SYM_EXIT)
+    { // exit statement
+        getsym();
+        gen(HALT, 0, 0); // Exit the program
+    }
+	else if (sym == SYM_RETURN)
+    { // return statement
+        getsym();
+        if (sym != SYM_RPAREN)
+        {
+            error(23); // Missing return value (if any)
+        }
+        getsym();
+        set1 = createset(SYM_RPAREN, SYM_NULL);
+        set = uniteset(set1, fsys);
+        expression(set, 0); // Process return value expression
+        destroyset(set1);
+        destroyset(set);
+        gen(RET, 0, 0); // Return to caller
+    }	
 	else if (sym == SYM_BEGIN)
 	{ // block
 		getsym();
@@ -1241,6 +1291,7 @@ void interpret()
 
 	printf("End executing PL/0 program.\n");
 } // interpret
+
 
 //////////////////////////////////////////////////////////////////////
 void main ()
