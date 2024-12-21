@@ -103,7 +103,7 @@ void getsym(void)
 		}
 		else
 		{
-			sym = SYM_NULL;       // illegal?
+			sym = SYM_COLON;       // 
 		}
 	}
 	else if (ch == '>')
@@ -288,7 +288,7 @@ void listcode(int from, int to)
 //////////////////////////////////////////////////////////////////////
 void factor(symset fsys)
 {
-	void expression(symset fsys);
+	int expression(symset fsys);
 	int i;
 	symset set;
 	
@@ -382,11 +382,11 @@ void term(symset fsys)
 } // term
 
 //////////////////////////////////////////////////////////////////////
-void expression(symset fsys)
+int expression(symset fsys)
 {
 	int addop;
 	symset set;
-
+        int result;
 	set = uniteset(fsys, createset(SYM_PLUS, SYM_MINUS, SYM_NULL));
 	
 	term(set);
@@ -406,6 +406,7 @@ void expression(symset fsys)
 	} // while
 
 	destroyset(set);
+	return result;
 } // expression
 
 //////////////////////////////////////////////////////////////////////
@@ -462,8 +463,8 @@ void condition(symset fsys)
 //////////////////////////////////////////////////////////////////////
 void statement(symset fsys)
 {
-	int i, cx1, cx2;
-	symset set1, set;
+	int i, cx1, cx2,cx3, cx4;
+	symset set1, set,set2;
 
 	if (sym == SYM_IDENTIFIER)
 	{ // variable assignment
@@ -571,13 +572,18 @@ void statement(symset fsys)
 	}
 	else if (sym == SYM_WHILE)
 	{ // while statement
+		cstack[ctop].ty = env;                            
+		cstack[ctop].c =he; 
+		ctop++;                  //进入新循环保留记录上一个环境                     
+		env = ENV_WHILE;//更新环境
+		he = cx;    
 		cx1 = cx;
 		getsym();
 		set1 = createset(SYM_DO, SYM_NULL);
-		set = uniteset(set1, fsys);
-		condition(set);
-		destroyset(set1);
-		destroyset(set);
+        set = uniteset(set1, fsys);
+        condition(set);
+        destroyset(set1);
+        destroyset(set);
 		cx2 = cx;
 		gen(JPC, 0, 0);
 		if (sym == SYM_DO)
@@ -591,7 +597,382 @@ void statement(symset fsys)
 		statement(fsys);
 		gen(JMP, 0, cx1);
 		code[cx2].a = cx;
+		ta = cx;
+
+		int i;
+		for (i = ctop - count; i < ctop; i++)
+		{
+			code[cstack[i].c].a = ta;                                //backpatch break
+		}
+		ctop = ctop - count - 1;
+        count = 0;
+        he = cstack[ctop].c;
+        env = cstack[ctop].ty;                                         //regain head
 	}
+	else if (sym == SYM_DO)                                                						//modified by lzp 2017/12/16
+	{ // do-while statement
+		cstack[ctop].c = he;
+		cstack[ctop++].ty = env;
+		env = ENV_DO;
+		he = cx;
+		getsym();
+		cx1 = cx; //记录循环开始的位置
+		statement(fsys);
+		if (sym != SYM_WHILE)
+		{
+			error(49);                 //missing 'while' in do-while
+		}
+		else
+			getsym();
+		if (sym != SYM_LPAREN)
+		{
+			error(43);                        //missing '('
+		}
+		else
+			getsym();
+		ta = cx;  //记录条件判断的位置
+		
+        set1 = createset(SYM_SEMICOLON, SYM_RPAREN, SYM_NULL);
+        set = uniteset(set1, fsys);
+        condition(set);
+        destroyset(set1);
+        destroyset(set);
+
+		
+		if (sym == SYM_RPAREN)
+		{
+			getsym();
+		}
+		else
+		{
+			error(22);            //missing ')'
+		}
+		if (sym == SYM_SEMICOLON)
+		{
+			getsym();
+		}
+		else
+		{
+			error(26);            //missing ';'
+		}
+		cx2 = cx;        //循环体结束
+		gen(JPC, 0, 0);
+		gen(JMP, 0, cx1);
+		code[cx2].a = cx;
+		int i;
+		for (i = ctop - count; i < ctop; i++)
+		{
+			if (cstack[i].ty == CON_BREAK)
+			{
+				code[cstack[ctop].c].a = cx;
+			}
+			else if (cstack[i].ty == CON_CONTINUE)
+			{
+				code[cstack[i].c].a = ta;
+			}
+		}
+		ctop = ctop - count - 1;
+        count = 0;
+        he = cstack[ctop].c;
+        env = cstack[ctop].ty; 
+	}//else if
+	else if (sym == SYM_BREAK)                                									//added by lzp 17/12/16
+	{
+		getsym();
+		if (sym != SYM_SEMICOLON)
+		{
+			error(26);                                        //missing ';'
+		}
+		else
+		{
+			getsym();
+		}
+		if (env == ENV_SWITCH)
+		{
+			gen(JMP, 0, 0);
+		}
+		else
+		{
+			count++;
+			cstack[ctop].ty = CON_BREAK;                     //store information in the stack
+			cstack[ctop++].c = cx;
+			gen(JMP, 0, 0);
+		}
+	}
+	else if (sym == SYM_CONTINUE)                              									//added by lzp 17/12/16
+	{
+		getsym();
+		if (sym != SYM_SEMICOLON)
+		{
+			error(26);                                        //missing ';'
+		}
+		else
+		{
+			getsym();
+		}
+		if (env == ENV_FOR || env == ENV_WHILE)
+		{
+			gen(JMP, 0, he);                                 //directly jump to the head
+		}
+		else if (env == ENV_DO)
+		{
+			count++;
+			cstack[ctop].ty = CON_CONTINUE;                       //store necessary information
+			cstack[ctop++].c = cx;
+			gen(JMP, 0, 0);
+		}
+	}
+	else if (sym == SYM_GOTO)                                   								//added by lzp 17/12/16
+	{
+		int i;
+		getsym();
+		if ( (i = position(id)) == 0)
+		{
+			error(59); // Undeclared label.
+			getsym();
+		}
+		else
+		{
+			getsym();
+		}
+		if (sym != SYM_SEMICOLON)
+		{
+			error(26);                                         //missing ';'
+		}
+		else
+		{
+			getsym();
+		}
+		gen(JMP, 0, table[i].value);                        //junp instruction
+	}
+	else if (sym == SYM_SWITCH)                                         						//modified by lzp 17/12/16
+	{
+		cstack[ctop++].ty = env;
+		env = ENV_SWITCH;
+		getsym();
+		if (sym != SYM_RPAREN)
+		{
+			error(43);           //missing '('
+		}//if
+		else
+		{
+			getsym();
+		}//else
+        set1 = createset(SYM_CASE, SYM_BEGIN, SYM_RPAREN, SYM_BEGIN, SYM_NULL);
+        set = uniteset( fsys, set1);
+        expression(set);
+        destroyset(set1);
+        destroyset(set);
+		if (sym != SYM_RPAREN)
+		{
+			error(22);                       //missing ')'
+		}//if
+		else
+		{
+			getsym();
+		}//else
+		if (sym != SYM_BEGIN)
+		{
+			error(50);              //missing 'begin'
+		}//if
+		else
+		{
+			getsym();
+		}//else
+		if ((sym != SYM_CASE) || (sym != SYM_DEFAULT) || (sym != SYM_END))
+		{
+			error(51);              //missing 'case','end' or 'default'
+		}//if
+		int tmp;
+		int de_break;         //mark whether there is 'break' after 'default'
+		int cx_br;
+		int num_case = 0;         //count num of case or default
+		cx1 = cx;
+		gen(JMP, 0, 0);            //goto test
+		while (sym != SYM_END)
+		{
+			num_case++;
+			if (tx_c == maxcase)
+			{
+				switchtab = (casetab *)realloc(switchtab, sizeof(casetab)*(maxcase + INCREMENT));
+				maxcase += INCREMENT;
+			}//if         //prepare for more case
+			tmp = sym;                                     //store the keyword 'case' or 'default'
+			if (sym == SYM_CASE) {
+				set = uniteset(fsys, statbegsys);
+				setinsert(set, SYM_COLON);
+				switchtab[tx_c].t = expression(set);
+				destroyset(set);
+			}//if
+			if (sym != SYM_COLON)
+			{
+				error(52);              //missing ':'
+			}//if
+			else
+			{
+				getsym();
+			}//else
+			if (tmp != SYM_DEFAULT)
+			{
+				switchtab[tx_c].c = cx;
+			}//if
+			else
+			{
+				cx2 = cx;//default place
+			}//else
+			while ((sym != SYM_CASE)||(sym != SYM_DEFAULT) ||(sym != SYM_END))       //inside case,default
+			{
+				if (sym == SYM_BREAK)
+				{
+					if (tmp != SYM_DEFAULT)
+					{
+						switchtab[tx_c].flag = TRUE;      //break
+						switchtab[tx_c++].cx_bre = cx;
+					}//if
+					else
+					{
+						de_break = TRUE;
+						cx_br = cx;
+					}//else
+				
+				}//if
+				set2 = uniteset(fsys, statbegsys);
+				set1=createset(SYM_CASE, SYM_END, SYM_NULL);
+				set=uniteset(set1,set2);
+				statement(set);
+				destroyset(set);
+			}//while2
+		}//while1
+		cx3 = cx;
+		gen(JMP, 0, 0); //cx3
+		code[cx1].a = cx;                                            //test
+		int i;
+		for (i = tx_c - num_case; i < tx_c; i++)                       //gen junp ins fo case and default
+		{
+			gen(JET, switchtab[i].t, switchtab[i].c);
+		}
+		gen(JMP, 0, cx2);                                           //default ,at the end
+		for (i = tx_c - num_case; i < tx_c; i++)                      //backpatch for break
+		{
+			if (switchtab[i].flag == TRUE)
+			{
+				code[switchtab[i].cx_bre].a = cx;
+			}
+		}//for
+		if (de_break == TRUE)
+		{
+			code[cx_br].a = cx;
+		}
+		code[cx3].a = cx;                                 //if ther is no break ,we can jump out of switch
+		tx_c -= num_case;                                //delete case of inside switch stat
+		ctop--;
+		env = cstack[ctop].ty;
+	}
+	else if (sym == SYM_FOR)
+{ // for statement
+	cstack[ctop].c = he;                              									//modified by lzp 17/12/16
+	cstack[ctop++].ty = env;
+	env = ENV_FOR;
+	getsym();
+	if (sym != SYM_LPAREN)
+	{
+		error(43);  //missing '('
+	}
+	else
+	{
+		getsym();
+	}
+	set = uniteset(fsys,statbegsys );													// modified by nanahka 17-12-21
+	set1=createset( SYM_SEMICOLON, SYM_RPAREN, SYM_IDENTIFIER, SYM_NULL);
+	fsys=uniteset(set1,fsys);
+	if (sym == SYM_IDENTIFIER)
+	{
+		getsym();
+		if (! (i = position(id)))
+		{
+			error(11); // Undeclared identifier.
+		}
+		else if (table[i].kind == ID_PROCEDURE)
+		{
+			error(54); // Incorrect type as an lvalue expression.
+		}
+		else
+		{
+			assignment(i, set);
+		}
+	}
+	else
+	{
+		error(44); // There must be a variable in 'for' statement.
+	}
+	set1 = createset(SYM_SEMICOLON, SYM_NULL);
+	test(set1, set, 10); // ';' expected
+	if (sym == SYM_SEMICOLON)
+	{
+		getsym();
+	}
+	cx1 = cx;
+	                                       //modified by lzp 17/12/16
+	condition(set);          //condition
+	destroyset(set);
+	test(set1, set, 10); // ';' expected
+	destroyset(set1);
+	if (sym == SYM_SEMICOLON)
+	{
+		getsym();
+	}
+	cx2 = cx;
+	gen(JPC, 0, 0);
+	cx3 = cx;
+	gen(JMP, 0, 0);
+	cx4 = cx;
+	he = cx;
+	set = uniteset(fsys,statbegsys );													// modified by nanahka 17-12-21
+	set1=createset( SYM_SEMICOLON, SYM_RPAREN, SYM_NULL);
+	fsys=uniteset(set1,fsys);
+	if (sym == SYM_IDENTIFIER)
+	{
+		getsym();
+		if (! (i = position(id)))
+		{
+			error(11); // Undeclared identifier.
+		}
+		else if (table[i].kind == ID_PROCEDURE)
+		{
+			error(54); // Incorrect type as an lvalue expression.
+		}
+		else
+		{
+			assignment(i, set);
+		}
+	}
+	else
+	{
+		error(44); // There must be a variable in 'for' statement.
+	}
+	destroyset(set);
+	set1 = createset(SYM_RPAREN, SYM_NULL);
+	test(set1, set, 22); // Missing ')'.
+	destroyset(set1);
+	if (sym == SYM_RPAREN)
+	{
+		getsym();
+	}
+	gen(JMP, 0, cx1);
+	code[cx3].a = cx;
+	statement(fsys);       //body of 'for'
+	gen(JMP, 0, cx4);
+	code[cx2].a = cx;
+	ta = cx;                                                         						//modified by lzp 17/12/16
+	for (i = ctop - count; i < ctop; i++)
+	{
+		code[cstack[i].c].a = ta;
+	}
+	ctop= ctop - count - 1;
+	count = 0;
+	he= cstack[ctop].c;
+	env = cstack[ctop].ty;
+}
 	test(fsys, phi, 19);
 } // statement
 			
