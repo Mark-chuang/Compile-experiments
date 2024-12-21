@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <malloc.h>
+
 
 #define NRW        11     // number of reserved words
 #define TXMAX      500    // length of identifier table
@@ -13,7 +15,12 @@
 #define MAXSYM     30     // maximum number of symbols  
 
 #define STACKSIZE  1000   // maximum storage
+#define MAX_CASE   		20     //maxinum cases in switsh                            
+#define INCREMENT  		5      //increment preparing for more space if necessary
+#define MAX_CONTROL 	50     //maxinum control statement
 
+#define TRUE	   		1										
+#define FALSE	   		0
 enum symtype
 {
 	SYM_NULL,
@@ -45,7 +52,15 @@ enum symtype
 	SYM_CALL,
 	SYM_CONST,
 	SYM_VAR,
-	SYM_PROCEDURE
+	SYM_PROCEDURE,
+        SYM_BREAK,
+	SYM_CONTINUE,
+	SYM_GOTO,
+	SYM_SWITCH,
+	SYM_CASE,
+	SYM_COLON,
+	SYM_DEFAULT,
+	SYM_FOR
 };
 
 enum idtype
@@ -55,7 +70,7 @@ enum idtype
 
 enum opcode
 {
-	LIT, OPR, LOD, STO, CAL, INT, JMP, JPC
+	LIT, OPR, LOD, STO, CAL, INT, JMP, JPC, JET
 };
 
 enum oprcode
@@ -124,6 +139,10 @@ int  err;
 int  cx;         // index of current instruction to be generated.
 int  level = 0;
 int  tx = 0;
+int  env;        // mark the type of environment where break,continue is                    
+int  he;
+int  ta;       // mark beginning and end of circulation
+
 
 char line[80];
 
@@ -157,6 +176,16 @@ char csym[NSYM + 1] =
 char* mnemonic[MAXINS] =
 {
 	"LIT", "OPR", "LOD", "STO", "CAL", "INT", "JMP", "JPC"
+};
+
+enum environment                                           							
+{
+	ENV_NULL, ENV_DO, ENV_WHILE, ENV_FOR, ENV_SWITCH                    //four kind env:do-while,while,for,switch
+};
+
+enum control                                                       							
+{
+	CON_NULL, CON_BREAK, CON_CONTINUE                                   //mark the type of control statement
 };
 
 typedef struct
